@@ -3,6 +3,7 @@ from opendbc.car import DT_CTRL, structs
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.interfaces import MAX_CTRL_SPEED
 from opendbc.car.toyota.values import ToyotaFlags
+from opendbc.car.ford.values import FordFlags
 
 from openpilot.selfdrive.selfdrived.events import Events
 
@@ -98,6 +99,10 @@ class CarSpecificEvents:
     CI = interfaces[self.CP.carFingerprint]
     # TODO: cleanup the honda-specific logic
     pcm_enable = self.CP.pcmCruise and self.CP.brand != 'honda'
+    if self.CP.brand == 'ford' and self.CP.flags & FordFlags.MAIN_SWITCH:
+      pcm_enable = False
+      if not CS.cruiseState.available:
+        events.add(EventName.pcmDisable)
     # TODO: on some hyundai cars, the cancel button is also the pause/resume button,
     # so only use it for cancel when running openpilot longitudinal
     allow_button_cancel = self.CP.brand != 'hyundai'
@@ -136,7 +141,7 @@ class CarSpecificEvents:
       events.add(EventName.steerOverride)
     if CS.steeringDisengage and not CS_prev.steeringDisengage:
       events.add(EventName.steerDisengage)
-    if CS.brakePressed and CS.standstill:
+    if CS.brakePressed and CS.standstill and not (self.CP.brand == 'ford' and self.CP.flags & FordFlags.MAIN_SWITCH):
       events.add(EventName.preEnableStandstill)
     if CS.gasPressed:
       events.add(EventName.gasPressedOverride)

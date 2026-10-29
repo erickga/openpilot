@@ -2,6 +2,7 @@ from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.ford.fordcan import CanBus
+from opendbc.car.ford.engagement import CANCEL_SIGNALS, MainSwitchEngagement
 from opendbc.car.ford.values import DBC, CarControllerParams, FordFlags
 from opendbc.car.interfaces import CarStateBase
 
@@ -19,6 +20,8 @@ class CarState(CarStateBase):
 
     self.distance_button = 0
     self.lc_button = 0
+    self.main_switch = MainSwitchEngagement()
+    self.main_cancel = False
 
   def update(self, can_parsers) -> structs.CarState:
     cp = can_parsers[Bus.pt]
@@ -61,10 +64,10 @@ class CarState(CarStateBase):
     ret.cruiseState.speed = cp.vl["EngBrakeData"]["Veh_V_DsplyCcSet"] * (CV.KPH_TO_MS if is_metric else CV.MPH_TO_MS)
     ret.cruiseState.enabled = cp.vl["EngBrakeData"]["CcStat_D_Actl"] in (4, 5)
     ret.cruiseState.available = cp.vl["EngBrakeData"]["CcStat_D_Actl"] in (3, 4, 5)
-    ret.cruiseState.nonAdaptive = cp.vl["Cluster_Info1_FD1"]["AccEnbl_B_RqDrv"] == 0
+    ret.cruiseState.nonAdaptive = not bool(self.CP.flags & FordFlags.NON_ACC) and cp.vl["Cluster_Info1_FD1"]["AccEnbl_B_RqDrv"] == 0
     ret.cruiseState.standstill = cp.vl["EngBrakeData"]["AccStopMde_D_Rq"] == 3
     ret.accFaulted = cp.vl["EngBrakeData"]["CcStat_D_Actl"] in (1, 2)
-    if not self.CP.openpilotLongitudinalControl:
+    if not self.CP.openpilotLongitudinalControl and not self.CP.flags & FordFlags.NON_ACC:
       ret.accFaulted = ret.accFaulted or cp_cam.vl["ACCDATA"]["CmbbDeny_B_Actl"] == 1
 
     # gear
@@ -108,10 +111,21 @@ class CarState(CarStateBase):
     self.acc_tja_status_stock_values = cp_cam.vl["ACCDATA_3"]
     self.lkas_status_stock_values = cp_cam.vl["IPMA_Data"]
 
-    ret.buttonEvents = [
+    button_events = [
       *create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise}),
       *create_button_events(self.lc_button, prev_lc_button, {1: ButtonType.lkas}),
     ]
+
+    if self.CP.flags & FordFlags.MAIN_SWITCH:
+      cruise_state = cp.vl["EngBrakeData"]["CcStat_D_Actl"]
+      cancel = any(cp.vl["Steering_Data_FD1"][s] for s in CANCEL_SIGNALS)
+      ret.buttonEnable = self.main_switch.update(cruise_state, ret.brakePressed, ret.gasPressed, cancel,
+                                                cp.can_valid and cp_cam.can_valid)
+      prev_cancel = self.main_cancel
+      self.main_cancel = cancel
+      button_events += create_button_events(self.main_cancel, prev_cancel, {1: ButtonType.cancel})
+
+    ret.buttonEvents = button_events
 
     return ret
 

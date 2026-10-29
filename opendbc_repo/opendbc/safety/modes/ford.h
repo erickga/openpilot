@@ -110,8 +110,23 @@ static bool ford_get_quality_flag_valid(const CANPacket_t *msg) {
 
 static const AngleSteeringLimits FORD_STEERING_LIMITS = FORD_LIMITS(false);
 
+static bool ford_main_switch = false;
+static bool ford_main_off_seen = false;
+static bool ford_cancel_pressed = false;
+static bool ford_buttons_seen = false;
+
 static void ford_rx_hook(const CANPacket_t *msg) {
   if (msg->bus == FORD_MAIN_BUS) {
+    if (ford_main_switch && (msg->addr == FORD_Steering_Data_FD1)) {
+      ford_buttons_seen = true;
+      // CcAslButtnCnclPress, CcAslButtnCnclResPress,
+      // CcAslButtnOffCnclPress, CcButtnOffPress (DBC Motorola bit numbering).
+      ford_cancel_pressed = GET_BIT(msg, 8U) || GET_BIT(msg, 21U) || GET_BIT(msg, 17U) || GET_BIT(msg, 24U);
+      if (ford_cancel_pressed) {
+        controls_allowed = false;
+        ford_main_off_seen = false;
+      }
+    }
     // Update in motion state from standstill signal
     if (msg->addr == FORD_DesiredTorqBrk) {
       // Signal: VehStop_D_Stat
@@ -152,12 +167,27 @@ static void ford_rx_hook(const CANPacket_t *msg) {
     // Update brake pedal and cruise state
     if (msg->addr == FORD_EngBrakeData) {
       // Signal: BpedDrvAppl_D_Actl
-      brake_pressed = ((msg->data[0] >> 4) & 0x3U) == 2U;
+      brake_pressed = !ford_main_switch && (((msg->data[0] >> 4) & 0x3U) == 2U);
 
       // Signal: CcStat_D_Actl
       unsigned int cruise_state = msg->data[1] & 0x07U;
       bool cruise_engaged = (cruise_state == 4U) || (cruise_state == 5U);
-      pcm_cruise_check(cruise_engaged);
+      if (ford_main_switch) {
+        bool available = (cruise_state == 3U) || cruise_engaged;
+        if (ford_main_off_seen && available && ford_buttons_seen && !safety_rx_checks_invalid &&
+            !gas_pressed && !ford_cancel_pressed) {
+          controls_allowed = true;
+        }
+        if (!available || ford_cancel_pressed) {
+          controls_allowed = false;
+        }
+        // Only OFF arms a new request. Standby, brake release, SET/RES and
+        // repeated active frames cannot re-enable after a disable or a fault.
+        ford_main_off_seen = (cruise_state == 0U) && !ford_cancel_pressed;
+        cruise_engaged_prev = cruise_engaged;  // preserve stock CANCEL TX gating
+      } else {
+        pcm_cruise_check(cruise_engaged);
+      }
     }
   }
 }
@@ -216,7 +246,7 @@ static bool ford_tx_hook(const CANPacket_t *msg) {
     // if cancel button is pressed when cruise isn't engaged.
     bool violation = false;
     violation |= ((msg->data[1] >> 0) & 1U) && !cruise_engaged_prev;   // Signal: CcAslButtnCnclPress (cancel)
-    violation |= ((msg->data[3] >> 1) & 1U) && !controls_allowed;     // Signal: CcAsllButtnResPress (resume)
+    violation |= ((msg->data[3] >> 1) & 1U) && (!controls_allowed || ford_main_switch);  // CcAsllButtnResPress
 
     if (violation) {
       tx = false;
@@ -296,6 +326,8 @@ static safety_config ford_init(uint16_t param) {
     {.msg = {{FORD_EngBrakeData, 0, 8, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{FORD_EngVehicleSpThrottle, 0, 8, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{FORD_DesiredTorqBrk, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+    // Required only in main-switch mode, where CANCEL must work in standby.
+    {.msg = {{FORD_Steering_Data_FD1, 0, 8, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
   };
 
   #define FORD_COMMON_TX_MSGS \
@@ -316,14 +348,30 @@ static safety_config ford_init(uint16_t param) {
     {FORD_LateralMotionControl2, 0, 8, .check_relay = true},
   };
 
+  static const CanMsg FORD_STOCK_TX_MSGS[] = {
+    FORD_COMMON_TX_MSGS
+    {FORD_LateralMotionControl, 0, 8, .check_relay = true},
+  };
+
   static const CanMsg FORD_LONG_TX_MSGS[] = {
     FORD_COMMON_TX_MSGS
     {FORD_ACCDATA, 0, 8, .check_relay = true},
     {FORD_LateralMotionControl, 0, 8, .check_relay = true},
   };
 
+  const uint16_t FORD_PARAM_LATERAL_ONLY = 4;
+  const bool ford_lateral_only = GET_FLAG(param, FORD_PARAM_LATERAL_ONLY);
   const uint16_t FORD_PARAM_CANFD = 2;
   const bool ford_canfd = GET_FLAG(param, FORD_PARAM_CANFD);
+
+  ford_main_switch = GET_FLAG(param, 8U);
+  ford_main_off_seen = false;
+  ford_cancel_pressed = false;
+  ford_buttons_seen = false;
+  if (ford_main_switch && (!ford_lateral_only || ford_canfd || GET_FLAG(param, 1U))) {
+    // This experimental mode is exclusively classic CAN, lateral-only.
+    return (safety_config){0};
+  }
 
   bool ford_longitudinal = false;
 
@@ -333,14 +381,18 @@ static safety_config ford_init(uint16_t param) {
 #endif
 
   // Longitudinal is the default for CAN, and optional for CAN FD w/ ALLOW_DEBUG
-  ford_longitudinal = !ford_canfd || ford_longitudinal;
+  ford_longitudinal = (!ford_canfd || ford_longitudinal) && !ford_lateral_only;
 
   safety_config ret;
   if (ford_canfd) {
     ret = ford_longitudinal ? BUILD_SAFETY_CFG(ford_rx_checks, FORD_CANFD_LONG_TX_MSGS) : \
                               BUILD_SAFETY_CFG(ford_rx_checks, FORD_CANFD_STOCK_TX_MSGS);
   } else {
-    ret = BUILD_SAFETY_CFG(ford_rx_checks, FORD_LONG_TX_MSGS);
+    ret = ford_longitudinal ? BUILD_SAFETY_CFG(ford_rx_checks, FORD_LONG_TX_MSGS) : \
+                              BUILD_SAFETY_CFG(ford_rx_checks, FORD_STOCK_TX_MSGS);
+  }
+  if (!ford_main_switch) {
+    ret.rx_checks_len -= 1;
   }
   return ret;
 }

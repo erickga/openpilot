@@ -46,11 +46,16 @@ class CarControllerParams:
 class FordSafetyFlags(IntFlag):
   LONG_CONTROL = 1
   CANFD = 2
+  LATERAL_ONLY = 4
+  MAIN_SWITCH = 8
 
 
 class FordFlags(IntFlag):
   # Static flags
   CANFD = 1
+  # Dynamic: positively identified non-ACC Bronco Sport variant.
+  NON_ACC = 2
+  MAIN_SWITCH = 4
 
 
 class RADAR:
@@ -210,12 +215,16 @@ def match_fw_to_car_fuzzy(live_fw_versions: LiveFwVersions, vin: str, offline_fw
 
   for candidate, fws in offline_fw_versions.items():
     # Keep track of ECUs which pass all checks (platform hint, within model year hint range)
+    platform_ecus = PLATFORM_CODE_ECUS
+    if (candidate == CAR.FORD_BRONCO_SPORT_MK1 and not live_fw_versions.get((0x764, None))
+        and any(fw.rstrip(b"\x00") == b"LX6C-2D053-KE" for fw in live_fw_versions.get((0x760, None), set()))):
+      platform_ecus = tuple(ecu for ecu in PLATFORM_CODE_ECUS if ecu != Ecu.fwdRadar)
     valid_found_ecus = set()
-    valid_expected_ecus = {ecu[1:] for ecu in fws if ecu[0] in PLATFORM_CODE_ECUS}
+    valid_expected_ecus = {ecu[1:] for ecu in fws if ecu[0] in platform_ecus}
     for ecu, expected_versions in fws.items():
       addr = ecu[1:]
       # Only check ECUs expected to have platform codes
-      if ecu[0] not in PLATFORM_CODE_ECUS:
+      if ecu[0] not in platform_ecus:
         continue
 
       # Expected platform codes & model year hints
@@ -307,6 +316,7 @@ FW_QUERY_CONFIG = FwQueryConfig(
     (Ecu.shiftByWire, 0x732, None),   # Gear Shift Module
     (Ecu.debug, 0x7d0, None),         # Accessory Protocol Interface Module
   ],
+  non_essential_ecus={Ecu.fwdRadar: [CAR.FORD_BRONCO_SPORT_MK1]},
   # Custom fuzzy fingerprinting function using platform and model year hints
   match_fw_to_car_fuzzy=match_fw_to_car_fuzzy,
 )
