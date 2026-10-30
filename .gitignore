@@ -1,5 +1,6 @@
 venv/
 .venv/
+personal-openpilot-notes/
 .ci_cache
 .env
 .clang-format

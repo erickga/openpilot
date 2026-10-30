@@ -6,7 +6,7 @@ from opendbc.car.ford.carcontroller import CarController
 from opendbc.car.ford.carstate import CarState
 from opendbc.car.ford.fordcan import CanBus
 from opendbc.car.ford.radar_interface import RadarInterface
-from opendbc.car.ford.values import CarControllerParams, DBC, Ecu, FordFlags, RADAR, FordSafetyFlags
+from opendbc.car.ford.values import CarControllerParams, DBC, Ecu, FordFlags, RADAR, FordSafetyFlags, CAR
 from opendbc.car.interfaces import CarInterfaceBase
 
 TransmissionType = structs.CarParams.TransmissionType
@@ -31,7 +31,15 @@ class CarInterface(CarInterfaceBase):
   def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:
     ret.brand = "ford"
 
-    ret.radarUnavailable = Bus.radar not in DBC[candidate]
+    found_ecus = [fw.ecu for fw in car_fw]
+    non_acc = (candidate == CAR.FORD_BRONCO_SPORT_MK1 and not docs and Ecu.fwdRadar not in found_ecus
+               and any(fw.ecu == Ecu.abs and fw.fwVersion.rstrip(b"\x00") == b"LX6C-2D053-KE" for fw in car_fw))
+    if non_acc:
+      ret.flags |= int(FordFlags.NON_ACC | FordFlags.MAIN_SWITCH)
+    ret.radarUnavailable = Bus.radar not in DBC[candidate] or non_acc
+    # A missing radar response alone is not evidence of a non-ACC vehicle.
+    if candidate == CAR.FORD_BRONCO_SPORT_MK1 and not docs and Ecu.fwdRadar not in found_ecus and not non_acc:
+      ret.dashcamOnly = True
     ret.steerControlType = structs.CarParams.SteerControlType.angle
     ret.steerActuatorDelay = 0.2
     ret.steerLimitTimer = 1.0
@@ -51,8 +59,14 @@ class CarInterface(CarInterfaceBase):
       cfgs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
     ret.safetyConfigs = cfgs
 
-    ret.alphaLongitudinalAvailable = ret.radarUnavailable
-    if alpha_long or not ret.radarUnavailable:
+    ret.alphaLongitudinalAvailable = ret.radarUnavailable and not non_acc
+    if non_acc:
+      ret.openpilotLongitudinalControl = False
+      ret.safetyConfigs[-1].safetyParam |= int(FordSafetyFlags.LATERAL_ONLY | FordSafetyFlags.MAIN_SWITCH)
+      # Require a distinct main-switch action after each disable. Keep reporting
+      # the real PCM cruise state for stock speed control and mismatch checks.
+      ret.minEnableSpeed = -1.
+    elif alpha_long or not ret.radarUnavailable:
       ret.safetyConfigs[-1].safetyParam |= FordSafetyFlags.LONG_CONTROL.value
       ret.openpilotLongitudinalControl = True
 
@@ -69,6 +83,9 @@ class CarInterface(CarInterfaceBase):
       # Lock out if the car does not have needed lateral and longitudinal control APIs.
       # Note that we also check CAN for adaptive cruise, but no known signal for LCA exists
       pscm_config = next((fw for fw in car_fw if fw.ecu == Ecu.eps and b'\x22\xDE\x01' in fw.request), None)
+      if not pscm_config and not docs:
+        carlog.error('dashcamOnly: Missing EPS As-Built configuration')
+        ret.dashcamOnly = True
       if pscm_config:
         if len(pscm_config.fwVersion) != 24:
           carlog.error('dashcamOnly: Invalid EPS FW version')
@@ -81,7 +98,6 @@ class CarInterface(CarInterfaceBase):
             ret.dashcamOnly = True
 
     # Auto Transmission: 0x732 ECU or Gear_Shift_by_Wire_FD1
-    found_ecus = [fw.ecu for fw in car_fw]
     if Ecu.shiftByWire in found_ecus or 0x5A in fingerprint[CAN.main] or docs:
       ret.transmissionType = TransmissionType.automatic
     else:

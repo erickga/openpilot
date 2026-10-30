@@ -527,3 +527,55 @@ class TestFordCANFDLongitudinalSafety(TestFordLongitudinalSafetyBase):
 
 if __name__ == "__main__":
   unittest.main()
+
+
+class TestFordCANLateralOnlySafety(TestFordSafetyBase):
+  STEER_MESSAGE = MSG_LateralMotionControl
+  TX_MSGS = [
+    [MSG_Steering_Data_FD1, 0], [MSG_Steering_Data_FD1, 2], [MSG_ACCDATA_3, 0], [MSG_Lane_Assist_Data1, 0],
+    [MSG_LateralMotionControl, 0], [MSG_IPMA_Data, 0],
+  ]
+  RELAY_MALFUNCTION_ADDRS = {0: (MSG_ACCDATA_3, MSG_Lane_Assist_Data1, MSG_LateralMotionControl, MSG_IPMA_Data)}
+  FWD_BLACKLISTED_ADDRS = {2: list(RELAY_MALFUNCTION_ADDRS[0])}
+
+  SAFETY_PARAM = FordSafetyFlags.LATERAL_ONLY
+
+  def status(self, state, brake=False):
+    return self.packer.make_can_msg_safety("EngBrakeData", 0, {
+      "CcStat_D_Actl": state, "BpedDrvAppl_D_Actl": 2 if brake else 1,
+    })
+
+  def test_standby_cancel_and_brake_require_reengagement(self):
+    for active_state in (4, 5):
+      self.setUp()
+      for _ in range(10):
+        self._rx(self.status(3))
+        self.assertFalse(self.safety.get_controls_allowed())
+      self._rx(self.status(active_state))
+      self.assertTrue(self.safety.get_controls_allowed())
+      self._rx(self.status(active_state, brake=True))
+      self.assertFalse(self.safety.get_controls_allowed())
+      for _ in range(10):
+        self._rx(self.status(active_state))
+        self.assertFalse(self.safety.get_controls_allowed())
+      self._rx(self.status(3))
+      self._rx(self.status(active_state))
+      self.assertTrue(self.safety.get_controls_allowed())
+      self._rx(self.status(3))  # CANCEL returns stock cruise to standby
+      self.assertFalse(self.safety.get_controls_allowed())
+
+  def test_external_disable_is_not_overwritten(self):
+    self._rx(self.status(4))
+    self.safety.set_controls_allowed(False)
+    for _ in range(10):
+      self._rx(self.status(4))
+      self.assertFalse(self.safety.get_controls_allowed())
+
+  def test_longitudinal_forbidden_even_with_conflicting_flag(self):
+    for param in (FordSafetyFlags.LATERAL_ONLY, FordSafetyFlags.LATERAL_ONLY | FordSafetyFlags.LONG_CONTROL):
+      self.safety.set_safety_hooks(CarParams.SafetyModel.ford, param)
+      self.safety.init_tests()
+      self.safety.set_controls_allowed(True)
+      msg = self.packer.make_can_msg_safety("ACCDATA", 0, {"AccPrpl_A_Rq": 1, "AccBrkTot_A_Rq": -1})
+      self.assertFalse(self._tx(msg))
+      self.assertEqual(0, self.safety.safety_fwd_hook(2, MSG_ACCDATA))

@@ -63,7 +63,7 @@ class CarController(CarControllerBase):
     if CC.cruiseControl.cancel:
       can_sends.append(fordcan.create_button_msg(self.packer, self.CAN.camera, CS.buttons_stock_values, cancel=True))
       can_sends.append(fordcan.create_button_msg(self.packer, self.CAN.main, CS.buttons_stock_values, cancel=True))
-    elif CC.cruiseControl.resume and (self.frame % CarControllerParams.BUTTONS_STEP) == 0:
+    elif CC.cruiseControl.resume and not self.CP.flags & FordFlags.MAIN_SWITCH and (self.frame % CarControllerParams.BUTTONS_STEP) == 0:
       can_sends.append(fordcan.create_button_msg(self.packer, self.CAN.camera, CS.buttons_stock_values, resume=True))
       can_sends.append(fordcan.create_button_msg(self.packer, self.CAN.main, CS.buttons_stock_values, resume=True))
     # if stock lane centering isn't off, send a button press to toggle it off

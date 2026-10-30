@@ -247,7 +247,7 @@ class CarInterfaceBase(ABC):
     if ret.cruiseState.speedCluster == 0:
       ret.cruiseState.speedCluster = ret.cruiseState.speed
 
-    ret.buttonEnable = self.CS.update_button_enable(ret.buttonEvents)
+    ret.buttonEnable = self.CS.update_button_enable(ret.buttonEvents) or ret.buttonEnable
 
     # save for next iteration
     self.CS.out = ret
