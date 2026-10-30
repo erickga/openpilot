@@ -38,6 +38,8 @@ Local validation on macOS / Python 3.12:
 
 These tests do not establish device runtime or physical steering performance. Event-generation tests substitute an event collector for alert rendering/IPC. Full device startup, current CAN signals, engagement/disengagement and stock SET behavior must be verified on the vehicle.
 
-Installation has not occurred. Before switching, retain the current code, firmware and persistent parameter backup and verify the vehicle is parked. Preserve personal settings, calibration, pairing and SSH keys, including the current `DisengageOnAccelerator` value. Do not reuse old CarParams flags. The upstream target requires AGNOS 19.9 (the prior branch targeted 18.4), so allow for the upstream OS update as well as the code build. Rollback must account for both the code and OS version, not just restore an old directory.
+On-device validation completed on 2026-10-30 at code commit `95fa9dc53`: AGNOS 19.9 booted, the full native build completed, and pandad flashed matching firmware and selected Ford safety parameter 12. Runtime checks showed the expected Bronco identification, steering-only mode, valid CAN, no Panda faults and no displayed alert while parked. Checked persistent settings, calibration and SSH configuration matched the pre-upgrade backup. Physical button and controlled driving validation remain outstanding.
 
-The earlier 0.11.1 branch remains the rollback reference. Keep this candidate separate until runtime verification is complete.
+Before switching installations, retain the current code, firmware and persistent parameter backup and verify the vehicle is parked. Preserve personal settings, calibration, pairing and SSH keys, including the current `DisengageOnAccelerator` value. Do not reuse old CarParams flags. The upstream target requires AGNOS 19.9 (the prior branch targeted 18.4), so allow for the upstream OS update as well as the code build. Rollback must account for both the code and OS version, not just restore an old directory.
+
+The earlier 0.11.1 branch remains the rollback reference.
