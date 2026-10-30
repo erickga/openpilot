@@ -39,6 +39,11 @@ compiler = Dir('#tinygrad_repo/examples/openpilot').abspath
 taskset = 'taskset -c 0-7 ' if arch == 'comma_arm64' else ''
 
 def compile_model(onnx_path, pkl_path):
+  # Packaged releases ship compiled models without the ONNX sources. Keep those
+  # artifacts when rebuilding this vehicle port; still build native code/Panda.
+  if File('#git_src_commit').exists() and not File(onnx_path).exists() and File(pkl_path).exists():
+    print(f"Using packaged release model: {pkl_path}")
+    return
   onnx_path, target_pkl_path = File(onnx_path).abspath, File(pkl_path).abspath
   cmd = (f'{tg_flags} {mac_brew_string} {taskset}python3 "{compiler}/compile_onnx.py" '
          f'"{onnx_path}" "{target_pkl_path}" --out-of-band --benchmark-runs 1')

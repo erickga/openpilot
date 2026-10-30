@@ -23,6 +23,8 @@ The port uses upstream's new `openpilot/` package layout and `CarEvents`. It ret
 
 The `prebuilt` marker is removed so startup builds the modified source and matching firmware. Checked-in upstream build products are not evidence of a custom firmware build; do not bypass the build by restoring `prebuilt`.
 
+Packaged releases contain compiled driving/monitoring models but omit their ONNX sources. The model build retains those shipped artifacts only when release metadata (`git_src_commit`) is present, the ONNX source is absent, and the compiled model exists. Native code and Panda firmware still rebuild normally. Source checkouts with ONNX files retain normal model compilation.
+
 ## Validation and deployment status
 
 Local validation on macOS / Python 3.12:
