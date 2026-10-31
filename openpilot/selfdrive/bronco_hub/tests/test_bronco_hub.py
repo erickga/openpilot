@@ -426,7 +426,11 @@ def test_can_uses_dedicated_nonconflated_socket(monkeypatch):
   monkeypatch.setitem(sys.modules, "openpilot.common.params", SimpleNamespace(Params=Mock()))
   collector = BroncoTelemetryCollector(enable_ipc=True)
   assert collector.sm is not None
-  assert "can" not in messaging.SubMaster.call_args.args[0]
+  from openpilot.cereal.services import SERVICE_LIST
+  services = messaging.SubMaster.call_args.args[0]
+  assert set(services) <= SERVICE_LIST.keys()
+  assert "deviceMotion" in services
+  assert "can" not in services
   messaging.sub_sock.assert_called_once_with("can", conflate=False)
   packer = CANPacker("ford_lincoln_base_pt")
   events = []
@@ -467,3 +471,24 @@ def test_pause_updates_ui_status_without_changing_engagement():
   namespace["_update_status"](ui)
   assert not ui.blinker_steering_paused
   assert ui.status == status.ENGAGED
+
+
+def test_device_motion_snapshot_uses_current_schema(monkeypatch):
+  import openpilot.cereal
+  motion = log.DeviceMotion.new_message()
+  motion.orientationNED = {"x": 0.1, "y": 0.2, "valid": True}
+
+  class FakeSM(dict):
+    def update(self, _):
+      pass
+
+  sm = FakeSM(deviceMotion=motion)
+  sm.seen = {"deviceMotion": True}
+  collector = BroncoTelemetryCollector(enable_ipc=False)
+  collector.sm = sm
+  messaging = SimpleNamespace()
+  monkeypatch.setattr(openpilot.cereal, "messaging", messaging, raising=False)
+  monkeypatch.setitem(sys.modules, "openpilot.cereal.messaging", messaging)
+  snapshot = collector.update_and_snapshot()
+  assert snapshot["vehicle"]["pitch_deg"] == round(math.degrees(0.2), 1)
+  assert snapshot["vehicle"]["roll_deg"] == round(math.degrees(0.1), 1)

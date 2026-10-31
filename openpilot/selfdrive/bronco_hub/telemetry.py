@@ -154,32 +154,28 @@ class BroncoTelemetryCollector:
       self._init_ipc()
 
   def _init_ipc(self) -> None:
-    try:
-      from openpilot.cereal import messaging
-      from openpilot.common.params import Params
-      from opendbc.can import CANParser
+    from openpilot.cereal import messaging
+    from openpilot.common.params import Params
+    from opendbc.can import CANParser
 
-      self.params = Params()
-      self.sm = messaging.SubMaster(
-        [
-          "carState",
-          "carControl",
-          "carOutput",
-          "controlsState",
-          "selfdriveState",
-          "modelV2",
-          "pandaStates",
-          "deviceState",
-          "gpsLocationExternal",
-          "vehicleParameters",
-          "livePose",
-        ]
-      )
-      self.can_sock = messaging.sub_sock("can", conflate=False)
-      self.cp_pt = CANParser("ford_lincoln_base_pt", EXTENDED_FORD_CAN_MESSAGES, 0)
-    except Exception:
-      self.sm = None
-      self.cp_pt = None
+    self.params = Params()
+    self.sm = messaging.SubMaster(
+      [
+        "carState",
+        "carControl",
+        "carOutput",
+        "controlsState",
+        "selfdriveState",
+        "modelV2",
+        "pandaStates",
+        "deviceState",
+        "gpsLocationExternal",
+        "vehicleParameters",
+        "deviceMotion",
+      ]
+    )
+    self.can_sock = messaging.sub_sock("can", conflate=False)
+    self.cp_pt = CANParser("ford_lincoln_base_pt", EXTENDED_FORD_CAN_MESSAGES, 0)
 
   def config_changes_allowed(self) -> bool:
     """Fail closed unless fresh device/Panda state confirms ignition is off."""
@@ -281,7 +277,7 @@ class BroncoTelemetryCollector:
     ss = self.sm["selfdriveState"] if (self.sm is not None and self.sm.seen.get("selfdriveState", False)) else None
     ds = self.sm["deviceState"] if (self.sm is not None and self.sm.seen.get("deviceState", False)) else None
     vp = self.sm["vehicleParameters"] if (self.sm is not None and self.sm.seen.get("vehicleParameters", False)) else None
-    lp = self.sm["livePose"] if (self.sm is not None and self.sm.seen.get("livePose", False)) else None
+    lp = self.sm["deviceMotion"] if (self.sm is not None and self.sm.seen.get("deviceMotion", False)) else None
     mv2 = self.sm["modelV2"] if (self.sm is not None and self.sm.seen.get("modelV2", False)) else None
     gps = self.sm["gpsLocationExternal"] if (self.sm is not None and self.sm.seen.get("gpsLocationExternal", False)) else None
     ps_list = self.sm["pandaStates"] if (self.sm is not None and self.sm.seen.get("pandaStates", False)) else []
@@ -303,10 +299,10 @@ class BroncoTelemetryCollector:
 
     roll_deg = math.degrees(float(vp.roll)) if vp is not None else 0.0
     pitch_deg = 0.0
-    if lp is not None and hasattr(lp, "orientationNED") and len(lp.orientationNED.xyz) >= 2:
-      pitch_deg = math.degrees(float(lp.orientationNED.xyz[1]))
+    if lp is not None and lp.orientationNED.valid:
+      pitch_deg = math.degrees(float(lp.orientationNED.y))
       if abs(roll_deg) < 1e-4:
-        roll_deg = math.degrees(float(lp.orientationNED.xyz[0]))
+        roll_deg = math.degrees(float(lp.orientationNED.x))
 
     curve_est = estimate_upcoming_curve(mv2, v_ego, cfg.curve_max_lat_accel) if mv2 is not None else estimate_upcoming_curve(None, 0.0)
 
