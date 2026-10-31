@@ -12,7 +12,9 @@ from openpilot.common.swaglog import cloudlog
 
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.vehicle_model import VehicleModel
+from openpilot.selfdrive.controls.lib.bronco_config import CachedBroncoStore
 from openpilot.selfdrive.controls.lib.cruise_cancel import should_cancel_cruise
+from openpilot.selfdrive.controls.lib.desire_helper import should_pause_lateral_on_blinker
 from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
@@ -47,6 +49,7 @@ class Controls:
     self.steer_limited_by_safety = False
     self.curvature = 0.0
     self.desired_curvature = 0.0
+    self.bronco_store = CachedBroncoStore()
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -97,9 +100,10 @@ class Controls:
     CC.enabled = self.sm['selfdriveState'].enabled
 
     # Check which actuators can be enabled
+    bronco_cfg, _ = self.bronco_store.refresh()
     standstill = abs(CS.vEgo) <= max(self.CP.minSteerSpeed, 0.3) or CS.standstill
     CC.latActive = self.sm['selfdriveState'].active and not CS.steerFaultTemporary and not CS.steerFaultPermanent and \
-                   (not standstill or self.CP.steerAtStandstill)
+                   (not standstill or self.CP.steerAtStandstill) and not should_pause_lateral_on_blinker(CS, bronco_cfg)
     CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in self.sm['onroadEvents']) and self.CP.openpilotLongitudinalControl
 
     actuators = CC.actuators

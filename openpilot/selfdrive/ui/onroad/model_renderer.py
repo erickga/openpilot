@@ -6,6 +6,7 @@ from opendbc.car.structs import car
 from dataclasses import dataclass, field
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
+from openpilot.selfdrive.controls.lib.bronco_config import CachedBroncoStore
 from openpilot.selfdrive.locationd.calibrationd import HEIGHT_INIT
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import gui_app
@@ -53,6 +54,10 @@ class ModelRenderer(Widget):
     self._road_edge_stds = np.zeros(2, dtype=np.float32)
     self._lead_vehicles = [LeadVehicle(), LeadVehicle()]
     self._path_offset_z = HEIGHT_INIT[0]
+    self._bronco_store = CachedBroncoStore()
+    self._left_blindspot = False
+    self._right_blindspot = False
+    self._blindspot_glow_enabled = True
 
     # Initialize ModelPoints objects
     self._path = ModelPoints()
@@ -96,6 +101,11 @@ class ModelRenderer(Widget):
 
     # Update state
     self._experimental_mode = sm['selfdriveState'].experimentalMode
+    cfg, _ = self._bronco_store.refresh()
+    self._blindspot_glow_enabled = cfg.blindspot_path_glow
+    cs = sm['carState']
+    self._left_blindspot = bool(cs.leftBlindspot)
+    self._right_blindspot = bool(cs.rightBlindspot)
 
     extrinsics_calibration = sm['extrinsicsCalibration']
     self._path_offset_z = extrinsics_calibration.height[0] if extrinsics_calibration.height else HEIGHT_INIT[0]
@@ -167,8 +177,10 @@ class ModelRenderer(Widget):
 
     # Update lane lines using raw points
     for i, lane_line in enumerate(self._lane_lines):
+      bsm_active = self._blindspot_glow_enabled and ((i == 1 and self._left_blindspot) or (i == 2 and self._right_blindspot))
+      line_width = 0.055 if bsm_active else (0.025 * self._lane_line_probs[i])
       lane_line.projected_points = self._map_line_to_polygon(
-        lane_line.raw_points, 0.025 * self._lane_line_probs[i], 0.0, max_idx, max_distance
+        lane_line.raw_points, line_width, 0.0, max_idx, max_distance
       )
 
     # Update road edges using raw points
@@ -262,8 +274,12 @@ class ModelRenderer(Widget):
       if lane_line.projected_points.size == 0:
         continue
 
-      alpha = np.clip(self._lane_line_probs[i], 0.0, 0.7)
-      color = rl.Color(255, 255, 255, int(alpha * 255))
+      bsm_active = self._blindspot_glow_enabled and ((i == 1 and self._left_blindspot) or (i == 2 and self._right_blindspot))
+      if bsm_active:
+        color = rl.Color(255, 72, 24, 235)
+      else:
+        alpha = np.clip(self._lane_line_probs[i], 0.0, 0.7)
+        color = rl.Color(255, 255, 255, int(alpha * 255))
       draw_polygon(self._rect, lane_line.projected_points, color)
 
     for i, road_edge in enumerate(self._road_edges):

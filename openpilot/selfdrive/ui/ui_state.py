@@ -9,6 +9,8 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.common.realtime import drop_realtime
 from openpilot.common.swaglog import cloudlog
+from openpilot.selfdrive.controls.lib.bronco_config import CachedBroncoStore
+from openpilot.selfdrive.controls.lib.desire_helper import should_pause_lateral_on_blinker
 from openpilot.selfdrive.ui.lib.prime_state import PrimeState
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.common.hardware import HARDWARE, PC
@@ -46,6 +48,8 @@ class UIState:
 
   def _initialize(self):
     self.params = Params()
+    self._bronco_store = CachedBroncoStore()
+    self.blinker_steering_paused = False
     self.sm = messaging.SubMaster(
       [
         "modelV2",
@@ -183,11 +187,16 @@ class UIState:
         callback()
 
   def _update_status(self) -> None:
-    if self.started and self.sm.updated["selfdriveState"]:
+    cfg, _ = self._bronco_store.refresh()
+    self.blinker_steering_paused = bool(
+      self.started and self.sm["selfdriveState"].active and not self.sm["carControl"].latActive
+      and should_pause_lateral_on_blinker(self.sm["carState"], cfg)
+    )
+    if self.started and (self.sm.updated["selfdriveState"] or self.sm.updated["carControl"]):
       ss = self.sm["selfdriveState"]
       state = ss.state
 
-      if state in (log.SelfdriveState.OpenpilotState.preEnabled, log.SelfdriveState.OpenpilotState.overriding):
+      if self.blinker_steering_paused or state in (log.SelfdriveState.OpenpilotState.preEnabled, log.SelfdriveState.OpenpilotState.overriding):
         self.status = UIStatus.OVERRIDE
       else:
         self.status = UIStatus.ENGAGED if ss.enabled else UIStatus.DISENGAGED
