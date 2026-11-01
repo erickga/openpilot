@@ -1,5 +1,71 @@
 # Bronco low-speed transition research — 2026-11-01
 
+## First multi-drive review — snapshot 2026-11-01 23:38 UTC
+
+Copied the five retained session directories privately for offline analysis. Three
+contain movement above 3 km/h; two are stationary. The active stationary JSONL
+changed during tar collection, so tar returned a warning; the archive extracted
+and all 88,888 sample records decoded successfully, with no malformed lines.
+Statistics describe this snapshot, not the ongoing end of the current session.
+
+Durations sum adjacent monotonic sample intervals only when 0 < dt <=150 ms;
+there were no larger gaps within the sampled sessions. ~83.34 minutes recorded,
+31.62 minutes moving, 37.20 minutes lateral-active (includes standstill), and
+12.62 minutes valid lateral-active between 10 and 30 km/h. Initial/stale invalid
+data totaled 19.32 seconds. Stationary requested-curvature values are not meaningful
+turn demand and were excluded by the existing gates.
+
+| Moving session (review order) | Moving minutes | Low-speed command at cap, seconds | Shadow eligible, seconds |
+| --- | ---: | ---: | ---: |
+| A | 7.55 | 53.36 | 11.30 |
+| B | 10.24 | 31.03 | 5.58 |
+| C | 13.82 | 46.87 | 18.26 |
+
+The cap criterion was abs(actual controller output)>=0.0199/m, lateral active,
+valid/no fault, and speed strictly between 10 and 30 km/h. Total cap exposure was
+131.27 seconds; 35.59 seconds had no driverPressed flag. That flag's absence does
+not establish hands-off driving: driver effort below its threshold and prior input
+can influence measured yaw. Do not use yaw/command ratios as isolated EPS gain.
+
+Shadow weight was positive for 35.14 seconds, including 23 contiguous windows
+of at least 0.5 seconds. None occurred at >=30 km/h or with driverPressed=true.
+One 2.97-second window at 19.18–22.08 km/h reached requested curvature 0.030396/m,
+full candidate weight and the experimental 0.15-rad angle cap. Across all sessions,
+the weighted hypothetical angle reached that cap for 0.97 seconds.
+
+**Reject the current transition implementation for actuation:** nine exits from
+|shadow angle|>0.01 rad went directly to zero on driver/turn-signal exclusion. Two
+went from |0.15| rad to zero over 50–60 ms while the proposed curvature field
+returned from zero to |0.020|/m. This is a discontinuity in the candidate command
+representation, not a measured steering jerk (the commands were never sent).
+Driver disengagement must remain prompt; a revised design must distinguish
+disabling assistance from handing control back between active actuators, rather
+than simply smoothing every safety exit indiscriminately.
+
+77,011 sample rows contained fresh (<150 ms old) actual outgoing 979 snapshots;
+all decoded actual path angles were zero. These snapshots may repeat frames and
+are not an exhaustive wire capture. They corroborate unchanged actual actuation.
+
+EPS availability was mostly 1 below 40 km/h and 3 above 40 in this sample, with
+brief boundary overlap. This is independent observational support for a speed
+boundary in this status on this vehicle, but it still does not establish TJA
+authority or path-angle response. No actuation-denial conclusion is inferred.
+
+Session names from two boots reflect an incorrect initial wall clock (the filenames
+start with an older timestamp despite later recordings). Use monotonic timestamps
+within sessions; do not assign calendar times from filenames or concatenate their
+monotonic clocks across boots. The current filename-based oldest-first pruning can
+also misorder those sessions once the retention threshold is reached; only five
+exist now, so count-based deletion has not yet been required. This should be fixed
+before relying on chronological ten-drive retention.
+
+Private snapshot, per-session summaries, transition windows and reproducible
+analysis scripts: `/tmp/bronco-shadow-review-20261101/` (`summary.json`,
+`transitions.json`, `analyze.py`, `transitions.py`). No raw logs/route identifiers
+were added to the repository. No device behavior was changed during this review.
+Next controller work should address handover discontinuities in shadow mode;
+these data do not validate the untransmitted curvature-to-path-angle mapping.
+
 ## Automatic multi-drive collection — supersedes one-hour launch
 
 User subsequently requested collection across drives, retaining five to ten and
