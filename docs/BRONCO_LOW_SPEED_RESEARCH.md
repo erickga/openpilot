@@ -1,5 +1,71 @@
 # Bronco low-speed transition research — 2026-11-01
 
+## Receive-only shadow logger added after the initial study
+
+`tools/car_porting/ford_shadow_logger.py` is an optional standalone observer. It
+subscribes to carState/carControl/carOutput/carParams and receives CAN/sendcan;
+it creates no publisher, CAN packer, Panda connection, or driving-process hook.
+It is NOT enabled automatically and has not been installed or run on the comma.
+The original offline-study status below describes the earlier checkpoint.
+
+The observer records, at up to 20 Hz:
+
+- Proposed transition weight/reason plus hypothetical curvature and path-angle
+  fields, both internal and wire-sign representations, explicitly marked unsent.
+- Actual actuator output, yaw rate/derived curvature, steering angle, driver
+  torque, speed, override, engagement, turn signals, CAN validity and steering faults.
+- Source monotonic timestamps and age for alignment; stale/invalid inputs disable
+  the candidate. Candidate generation is limited to non-ACC, non-CANFD Bronco Sport.
+- Latest sampled raw CAN 126 (pinion), 972 (EPS status), and 979 (actual steering),
+  including sendcan, bus-0 RX and Panda returned/rejected copies when observed.
+  Each retains its timestamp and hex bytes; 979 is additionally decoded. Pinion
+  bytes need subsequent DBC/quality/checksum validation before treating them as a
+  measurement. Conflated subscriptions mean these are snapshots, NOT a complete
+  CAN capture. A retained snapshot can be old: use its timestamp, not row time.
+
+The hypothetical angle uses requested curvature * speed * 1.0 second, capped at
+0.15 rad, weighted by the scheduler; hypothetical curvature fades from actual
+output to zero. This is a BluePilot-inspired research hypothesis, not a port of
+its controller or a calibrated actuator conversion. Wire-angle negation follows
+the inspected BluePilot implementation as a hypothesis; the conflicting semantic
+sign comments remain unresolved. No safety certification is implied by the cap.
+There is no automatic reset pulse. Hard gates/sign reversals can be discontinuous;
+these are findings for review, not actuator-ready transitions. Inactive rows may
+retain the recorded actual curvature as the baseline while shadow angle is zero.
+
+**Causal limitation:** real yaw/pinion response is to the real STOCK commands.
+These logs can reject poor transition scheduling and implausible command sequences;
+they cannot identify the physical response to an untransmitted path-angle command.
+
+Files are owner-only, rotating JSONL: `shadow.jsonl` plus seven backups, roughly
+64 MiB total across sessions. Oldest files are overwritten. A single-writer lock
+prevents conflicting runs. Each session includes wall/monotonic anchors and hashes
+of both experiment source files. Copy logs privately before rotation loses the
+desired drive. No VIN, GPS or Hub key is collected by this observer. Normal rlogs
+are still needed for full CAN and Panda-state analysis. Disk errors stop the
+observer only; no automatic restart is registered. It runs at reduced priority.
+
+After a separately reviewed installation, start from the repository root using
+the device's configured Python environment (the module must be importable):
+
+```sh
+PYTHONPATH=.:opendbc_repo python -m tools.car_porting.ford_shadow_logger \
+  --output-dir /data/bronco-shadow --duration 3600
+```
+
+Keep the terminal session open. Ctrl-C stops it; otherwise it exits after one hour.
+Starting/stopping requires no driving-process restart or firmware flash. Rollback
+is simply stopping the observer; reverting its commit removes the optional code.
+Do not delete collected logs as part of rollback. No Hub switch or automatic launch
+was added. This command is documented, not executed on the vehicle in this task.
+
+Validation: 13 standard-library tests cover candidate generation, exclusions,
+sign symmetry, raw-command decoding, nonfinite values, bounded file rotation,
+permissions and writer locking, plus the original scheduler behavior. Local native
+IPC smoke testing is unavailable because this Python environment lacks `msgq`;
+live subscriptions and on-device resource use remain to be verified before logging
+a drive. Production steering and Panda source files are unchanged.
+
 ## Status and recovery checkpoint
 
 This is an **offline eligibility prototype**, not a working path-angle controller or
@@ -108,6 +174,29 @@ Availability=1 means LCA/LKA suppressed, LDW available in the local DBC. Of thes
 in these selected segments, so they do not establish a 40 km/h threshold on this
 Bronco. Existing steering still operated: this status is not proof that the EPS
 rejects every request or proof of a quantitative authority ceiling.
+
+### Correction after follow-up review
+
+The availability observation must not be used to infer that additional path-angle
+authority is limited. `fordcan.py` distinguishes the Lane_Assist_Data1 LKA interface
+from LateralMotionControl TJA/LCA and explicitly describes the latter as not subject
+to the PSCM lockout. Ford's owner documentation distinguishes stock lane keeping
+(above 40 mph / 64 km/h) from lane centering. That user-facing threshold does not
+establish the precise scope of CAN 972's availability signal on this configured
+EPS. Neither the inference of a TJA authority reduction nor the opposite assertion
+that the signal applies exclusively to LKA has been established here. Denied=0
+and observed curvature response demonstrate operation, not unused authority or a
+validated path-angle mapping. The previous user-facing implication of limited
+path-angle benefit from this status alone was too strong and is withdrawn.
+
+The proposed anti-overshoot change also needs qualification: at 19.7 km/h the
+current interpolation is approximately 90.6% unfiltered / 9.4% filtered, not a
+full five-second lag. Moving the blend to 11–16 m/s would alter steering up to
+57.6 km/h, contrary to the agreed below-30 scope. The ramp-type comment explicitly
+says it makes no difference with curvature control. A residual-curvature times
+lookahead formula is a geometric hypothesis, not a verified combined EPS response;
+the documented signs of path angle and curvature differ. A same-sign gate plus
+an absolute angle cap is not a complete independent safety design.
 
 Private raw routes, identifiers and per-sample CSV outputs remain outside this
 repository under the existing local analysis directory; no credentials are added.
