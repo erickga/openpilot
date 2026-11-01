@@ -1,5 +1,38 @@
 # Bronco low-speed transition research — 2026-11-01
 
+## Recording-order fix after first review
+
+Replaced wall-clock filename ordering with a persistent increasing session sequence.
+New allocations are written atomically with fsync before directory creation; the
+allocator also scans retained metadata so it never reuses a retained sequence.
+Pruning sorts explicit sequence numbers. Legacy/unreadable metadata is protected
+from automatic deletion rather than guessing its age from a clock. The supervisor
+lock serializes allocations. Wall-clock values remain descriptive metadata only.
+
+Migrated the five existing device sessions to sequences 1–5 using capture order
+already observed in inventories/live creation, preserving each original metadata
+file as `session-before-sequence.json`. No log was deleted. Unknown inventory
+would have caused migration to stop. Allocator checkpoint is `drives/sequence.json`.
+New directories will use `drive-seq-0000000006` and so on.
+
+Installed source hash verified locally/remotely:
+`79b40c9a37fa102aa9986dcef0cec539739a68eed3965a683e94b33ffbcb66ae`.
+Previous supervisor preserved at
+`/data/bronco-shadow/backup/ford_shadow_service-before-sequence.py`.
+18 tests pass, including backwards clock jumps, retention order and protected
+legacy sessions; Ruff passes. The current recorder was not interrupted: the new
+supervisor code takes effect when manager launches it for the next drive or reboot.
+There are only five retained sessions, below both retention thresholds at review.
+Do not downgrade to the clock-sorted supervisor unless prepared to lose correct
+retention ordering; disabling recording is preferable if rollback is needed.
+
+Low-speed conclusion remains: the curvature output limit is repeatedly reached
+at 10–30 km/h. This supports investigating additional low-speed authority, but
+shadow data cannot establish physical benefit of path angle. The nine abrupt
+candidate exits also occurred at low speed and require a handover redesign before
+actuation. No above-30 steering change is proposed or implemented. This patch fixes
+recording retention only; it does not mask or alter those experimental transitions.
+
 ## First multi-drive review — snapshot 2026-11-01 23:38 UTC
 
 Copied the five retained session directories privately for offline analysis. Three

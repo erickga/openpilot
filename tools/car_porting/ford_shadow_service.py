@@ -1,5 +1,6 @@
 """Boot supervisor for receive-only shadow collection; no driving process hooks."""
 import json
+import os
 from pathlib import Path
 import signal
 import subprocess
@@ -11,10 +12,44 @@ MAX_DRIVES = 10
 MAX_BYTES = 512 * 1024 * 1024
 
 
+def write_json(path: Path, value):
+  temporary = path.with_suffix(path.suffix + ".tmp")
+  with temporary.open("w") as output:
+    json.dump(value, output)
+    output.write("\n")
+    output.flush()
+    os.fsync(output.fileno())
+  temporary.replace(path)
+
+
+def sequence(path: Path) -> int | None:
+  try:
+    value = json.loads((path / "session.json").read_text()).get("sequence")
+    return value if type(value) is int and value > 0 else None
+  except (OSError, ValueError):
+    return None
+
+
+def new_session(root: Path) -> Path:
+  # Called while holding the supervisor lock. Wall time is metadata only.
+  counter = root / "sequence.json"
+  previous = json.loads(counter.read_text()) if counter.exists() else 0
+  previous = max(previous, max((sequence(p) or 0 for p in root.glob("drive-*")), default=0))
+  number = previous + 1
+  write_json(counter, number)  # persist allocation before creating a directory
+  active = root / f"drive-seq-{number:010d}"
+  active.mkdir(mode=0o700)
+  write_json(active / "session.json", {"sequence": number, "start_wall_ns": time.time_ns(),
+                                      "start_mono_ns": time.monotonic_ns(), "shadow_only": True})
+  return active
+
+
 def prune(root: Path, active: Path | None = None):
   """Remove only our marked drive directories; preserve unrelated files."""
   import shutil
-  drives = sorted(p for p in root.glob("drive-*") if p.is_dir() and not p.is_symlink() and (p / "session.json").is_file())
+  # Unmigrated legacy sessions are protected, never ordered by unreliable clocks.
+  drives = sorted((p for p in root.glob("drive-*") if p.is_dir() and not p.is_symlink()
+                   and sequence(p) is not None), key=sequence)
   def size(path):
     return sum(p.stat().st_size for p in path.iterdir() if p.is_file() and not p.is_symlink())
   sizes = {p: size(p) for p in drives}
@@ -77,11 +112,7 @@ def main():
       elif child is None or child.poll() is not None:
         if now >= next_attempt:
           if active is None:
-            active = ROOT / f"drive-{time.time_ns():020d}"
-            active.mkdir(mode=0o700)
-            (active / "session.json").write_text(json.dumps({"start_wall_ns": time.time_ns(),
-                                                           "start_mono_ns": time.monotonic_ns(),
-                                                           "shadow_only": True}) + "\n")
+            active = new_session(ROOT)
           child = subprocess.Popen([sys.executable, "-m", "tools.car_porting.ford_shadow_logger",
                                     "--output-dir", str(active), "--duration", "86400"],
                                    stdin=subprocess.DEVNULL)

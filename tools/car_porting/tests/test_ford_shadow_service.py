@@ -1,9 +1,10 @@
 from pathlib import Path
+import json
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from tools.car_porting.ford_shadow_service import is_driving, prune
+from tools.car_porting.ford_shadow_service import is_driving, prune, new_session
 
 
 class TestService(unittest.TestCase):
@@ -20,7 +21,7 @@ class TestService(unittest.TestCase):
       for i in range(12):
         d = root / f"drive-{i:03d}"
         d.mkdir()
-        (d / "session.json").write_text("{}")
+        (d / "session.json").write_text(json.dumps({"sequence": i+1}))
       prune(root, root / "drive-011")
       self.assertFalse((root / "drive-000").exists())
       self.assertTrue((root / "drive-002").exists())
@@ -33,11 +34,34 @@ class TestService(unittest.TestCase):
       for i in range(3):
         d = root / f"drive-{i}"
         d.mkdir()
-        (d / "session.json").write_text("{}")
+        (d / "session.json").write_text(json.dumps({"sequence": i+1}))
         (d / "shadow.jsonl").write_text("x" * 100)
       with patch("tools.car_porting.ford_shadow_service.MAX_BYTES", 150):
         prune(root, root / "drive-2")
       self.assertEqual(list(root.iterdir()), [root / "drive-2"])
+
+  def test_clock_rollback_cannot_reorder_sessions(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      root = Path(tmp)
+      with patch("tools.car_porting.ford_shadow_service.time.time_ns", return_value=200):
+        first = new_session(root)
+      with patch("tools.car_porting.ford_shadow_service.time.time_ns", return_value=100):
+        second = new_session(root)
+      with patch("tools.car_porting.ford_shadow_service.MAX_DRIVES", 1):
+        prune(root, second)
+      self.assertFalse(first.exists())
+      self.assertTrue(second.exists())
+      self.assertNotEqual(new_session(root), second)
+
+  def test_legacy_without_sequence_is_protected(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      root = Path(tmp)
+      legacy = root / "drive-0"
+      legacy.mkdir()
+      (legacy / "session.json").write_text("{}")
+      with patch("tools.car_porting.ford_shadow_service.MAX_BYTES", 0):
+        prune(root)
+      self.assertTrue(legacy.exists())
 
 
 if __name__ == "__main__":
