@@ -1,5 +1,51 @@
 # Bronco low-speed transition research — 2026-11-01
 
+## Automatic multi-drive collection — supersedes one-hour launch
+
+User subsequently requested collection across drives, retaining five to ten and
+overwriting old recordings. Configured a maximum of **10 drive sessions**, with
+512 MiB total retention and the existing ~64 MiB per-session rolling limit.
+Pruning runs at session transitions and every 30 seconds; the total cap can be
+briefly exceeded between checks. Older drives may be deleted before reaching ten
+when the byte cap is reached. Each unusually long drive retains its newest tail.
+The original one-hour logs outside `drives/` are preserved separately, not pruned.
+
+`ford_shadow_service.py` listens only to deviceState and starts/stops the existing
+observer on fresh, valid onroad/offroad state. A state older than five seconds stops
+collection; recovery starts a new session. Sessions are therefore ignition/onroad
+windows, not guaranteed trips with movement. At most one supervisor owns a file
+lock. Observer failures retry no more than every 30 seconds within the same session.
+No changes are made to CAN transmission, steering controllers or Panda.
+
+Persistence is one PythonProcess registration in
+`openpilot/system/manager/process_config.py`, named `ford_shadow`, using `only_onroad`.
+This adds an optional logging child, not a controller hook. A systemd installation
+was attempted but `/etc` is read-only on AGNOS; no system unit was installed and
+the unused template was removed. The original manager config was verified against
+the stable commit and backed up to `/data/bronco-shadow/backup/process_config.py`
+(SHA-256 `c240ecabc06c1f38020aa4e63a97413c2def562ce134e028ecc31516d79cc074`).
+
+Deployment verified at approximately 2026-11-01 20:06 UTC: old observer stopped,
+new supervisor/observer running, first `/data/bronco-shadow/drives/drive-*/shadow.jsonl`
+growing, no supervisor console errors. Correct manager module imports and onroad
+predicate True/offroad False verified; 16 local tests and Ruff pass. Car process
+PID remained unchanged. A full reboot/physical ignition-cycle test was not performed.
+The current supervisor was launched separately to avoid restarting openpilot;
+future manager startups use the registered child automatically. Software updates
+that replace process_config may remove this local registration.
+
+Disable/rollback: remove only the `ford_shadow` registration line (or restore the
+backed-up config ONLY if no later changes need preserving), and stop the verified
+`tools.car_porting.ford_shadow_service` PID with SIGTERM. Its finally block stops
+its observer. If manager already owns the supervisor, edit the registration first
+and apply it at the next safe manager restart; do not restart the driving stack
+while driving. Inspect processes to confirm both are stopped. Keep recorded logs;
+the added tools can remain inert. No Panda rollback is involved.
+
+Files to preserve privately for analysis: the complete `drives/` directory, plus
+matching standard rlogs. No remote upload or public/private repository push was
+performed as part of enabling collection.
+
 ## Shadow-only installation verified 2026-11-01 20:00 UTC
 
 At the user's explicit request, copied ONLY `ford_shadow_logger.py` and

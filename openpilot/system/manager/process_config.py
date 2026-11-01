@@ -114,6 +114,7 @@ procs = [
   PythonProcess("updated", "openpilot.system.updated.updated", only_offroad, enabled=not PC),
   PythonProcess("uploader", "openpilot.system.loggerd.uploader", always_run),
   PythonProcess("bronco_hub", "openpilot.selfdrive.bronco_hub.server", always_run),
+  PythonProcess("ford_shadow", "tools.car_porting.ford_shadow_service", only_onroad),
 
   # debug procs
   NativeProcess("bridge", "openpilot/cereal/messaging", ["./bridge"], notcar),
