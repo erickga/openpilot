@@ -1,5 +1,41 @@
 # Bronco low-speed transition research — 2026-11-01
 
+## Shadow-only installation verified 2026-11-01 20:00 UTC
+
+At the user's explicit request, copied ONLY `ford_shadow_logger.py` and
+`ford_low_speed_research.py` from research revision `9fb5c57d6` into the existing
+`/data/openpilot/tools/car_porting/` directory. Neither destination file existed
+before installation. Device HEAD remains `cb7202ba3d90fa7c8c8d715fdaecc3fa76d24268`;
+no checkout, rebuild, firmware flash, or driving-process restart was performed.
+Pre-existing generated/native build differences were left untouched. Ford controller
+and safety source diffs remain empty.
+
+The working device interpreter is `/usr/local/venv/bin/python`; `/usr/bin/python3`
+lacks capnp. Started the observer detached with that virtualenv, repository-root
+working directory, `PYTHONPATH=.:opendbc_repo`, duration 3600 seconds, output directory
+`/data/bronco-shadow`, and console output `observer.out`. Initial observer PID 5449.
+Use process discovery rather than assuming this PID remains valid in future sessions.
+
+Validated fresh carState/carControl/carOutput, supported-platform=true, actual CAN
+126/972/979 and Panda returned 979 snapshots. At standstill with steering inactive,
+shadow weight and both proposed fields were zero. 285 JSONL records existed at the
+verification checkpoint. No console errors. Initial sampled memory was ~37 MiB;
+process nice level 10. This verifies native IPC and file logging on the device,
+not controller performance or a completed moving-drive collection.
+
+SHA-256 matched locally and remotely:
+
+- logger: `30ad27d68edb8d172fe4ad756d9de57f53eebf2561677d9c585309ddb39dc134`
+- scheduler: `b7eadad0ca1e5e9fb37361e5bc97ec36ffaea26e39c3e7e297dfb026e9a2d1ac`
+
+Stop/rollback: inspect `pgrep -af tools.car_porting.ford_shadow_logger`, then send
+SIGINT to the verified Python observer PID (`kill -INT <pid>`). Do not terminate
+card/manager or restore old firmware. The process also expires after one hour and
+does not restart on boot. Preserve `/data/bronco-shadow` logs. To remove the feature,
+after stopping it remove only the two added Python files after verifying their
+hashes still match; they had no predecessors to restore. No production branch
+rollback is necessary. Earlier sections below describe pre-installation status.
+
 ## Receive-only shadow logger added after the initial study
 
 `tools/car_porting/ford_shadow_logger.py` is an optional standalone observer. It
