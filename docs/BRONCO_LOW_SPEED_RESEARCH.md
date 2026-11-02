@@ -1,5 +1,49 @@
 # Bronco low-speed transition research — 2026-11-01
 
+## Second review — 2026-11-02, low-speed unwind complaint
+
+Device found on the previously verified hotspot address. Downloaded sequences 6
+and 7 privately at ~20:35 UTC; sequence naming confirms the new allocator is active.
+Active sequence 7 changed during tar snapshot; extraction and all 56,247 complete
+sample records parsed without malformed JSON. No within-session interval >150 ms.
+Sequence 6 has 29.33 moving minutes; sequence 7 snapshot has 18.09. Combined with
+the earlier snapshot: ~79.04 moving minutes, ~20.50 minutes valid lateral-active
+at 10–30 km/h, 153.01 seconds actual output at the low-speed curvature cap, and
+37.28 seconds positive shadow weight. These are accumulated snapshots, not full
+trip counts or closed-loop validation. New shadow eligibility was only ~2.14 seconds;
+more total driving did not supply proportionally more relevant tight-turn data.
+
+For the reported slow return after tight turns/glorietas, selected 38 heuristic
+windows across both snapshots: active, valid, 10–30 km/h at selection; request
+previously exceeded |0.015|/m within two seconds, then remained below |0.005|/m for
+at least ~0.3 s. Events separated by >=5 seconds. Actual reported controller output
+first crossed below |0.005|/m in 0–0.160 seconds after request threshold crossing.
+This measures delay AFTER demand eases; it does not measure whether the model
+itself asked to straighten too late. The streams are asynchronous snapshots.
+
+Several wheel-return times were longer, including an older ~12.6 km/h window:
+wheel ~68 degrees at selection, output below |0.005|/m ~0.05 s later, wheel below
+15 degrees ~1.44 s later, no driverPressed flag in the next five seconds. Request
+subsequently reversed sign and grew while the wheel continued unwinding. Thus this
+is not a sustained zero-command EPS step response and does not identify ECU gain,
+friction, driver effort or the exact road geometry. No driverPressed flag does not
+prove no driver torque. No video was reviewed to confirm a roundabout exit.
+
+Conclusion: enough data to identify low-speed saturation and candidate handover
+flaws, but not enough to promise path-angle benefit or identify the precise cause
+of the user's perceived resistance. These selected windows do not support a
+multi-second delay between an already-small request and small controller output.
+Removing anti-overshoot alone is not established as the fix, especially for the
+12.6 km/h example below the filter's 18 km/h blending threshold. Curvature=0 still
+means active straight-path following, not release of EPS assistance; those are
+different behaviors and must not be conflated.
+
+Next targeted analysis should align a user-identified incident with full rlogs,
+model request, controller request/output, returned CAN, steering torque/pinion and
+yaw, and footage if available. No live steering changes, release pulses, filter
+changes or safety changes were made. Private reproducible analysis and snapshots:
+`/tmp/bronco-shadow-review-20261102/` (`summary.json`, `exits.json`, scripts).
+
 ## Recording-order fix after first review
 
 Replaced wall-clock filename ordering with a persistent increasing session sequence.
