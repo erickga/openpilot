@@ -303,6 +303,14 @@ INDEX_HTML = """<!DOCTYPE html>
 
       <div class="setting-row">
         <div>
+          <div class="setting-label">Closing Fast Advisory</div>
+          <div class="setting-desc">Early comma banner and chime when approaching a vehicle quickly, including while braking. Does not apply brakes.</div>
+        </div>
+        <input type="checkbox" id="cfg-closing_speed_warning" onchange="saveCfg()" style="width:22px; height:22px;">
+      </div>
+
+      <div class="setting-row">
+        <div>
           <div class="setting-label">Vision Curve Speed Warning</div>
           <div class="setting-desc">Show recommended turn speed alert on comma HUD and phone before sharp curves.</div>
         </div>
@@ -548,6 +556,7 @@ async function loadCfg() {
   document.getElementById('cfg-blindspot_path_glow').checked = !!cfg.blindspot_path_glow;
   document.getElementById('cfg-road_edge_lane_change_block').checked = !!cfg.road_edge_lane_change_block;
   document.getElementById('cfg-curve_speed_warning').checked = !!cfg.curve_speed_warning;
+  document.getElementById('cfg-closing_speed_warning').checked = !!cfg.closing_speed_warning;
   document.getElementById('cfg-hud_show_nav').checked = !!cfg.hud_show_nav;
 }
 
@@ -559,6 +568,7 @@ async function saveCfg() {
     blindspot_path_glow: document.getElementById('cfg-blindspot_path_glow').checked,
     road_edge_lane_change_block: document.getElementById('cfg-road_edge_lane_change_block').checked,
     curve_speed_warning: document.getElementById('cfg-curve_speed_warning').checked,
+    closing_speed_warning: document.getElementById('cfg-closing_speed_warning').checked,
     hud_show_nav: document.getElementById('cfg-hud_show_nav').checked,
   };
   const res = await fetch('/api/config', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});

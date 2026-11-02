@@ -16,10 +16,12 @@ from openpilot.common.realtime import config_realtime_process, Priority, Ratekee
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.gps import get_gps_location_service
 
-from opendbc.car.ford.values import FordFlags
+from opendbc.car.ford.values import FordFlags, CAR
+from openpilot.selfdrive.controls.lib.bronco_config import CachedBroncoStore
+from openpilot.selfdrive.selfdrived.closing_advisory import ClosingAdvisory, ClosingSample
 from openpilot.selfdrive.car.car_events import CarEvents
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
-from openpilot.selfdrive.selfdrived.events import Events, ET
+from openpilot.selfdrive.selfdrived.events import Events, ET, Alert, AlertStatus, AlertSize, Priority as AlertPriority, VisualAlert, AudibleAlert
 from openpilot.selfdrive.selfdrived.helpers import ExcessiveActuationCheck
 from openpilot.selfdrive.selfdrived.state import StateMachine
 from openpilot.selfdrive.selfdrived.alertmanager import AlertManager, set_offroad_alert
@@ -62,6 +64,9 @@ class SelfdriveD:
       self.CP = CP
 
     self.car_events = CarEvents(self.CP)
+    self.closing_advisory = ClosingAdvisory()
+    self.bronco_store = CachedBroncoStore()
+    self.closing_advisory_visible = False
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -523,6 +528,31 @@ class SelfdriveD:
     pers = LONGITUDINAL_PERSONALITY_MAP[self.personality]
     alerts = self.events.create_alerts(self.state_machine.current_alert_types, [self.CP, CS, self.sm, self.is_metric,
                                                                                 self.state_machine.soft_disable_timer, pers])
+    # Separate comma-only advisory; never reuse VisualAlert.fcw (which reaches CAN).
+    now = time.monotonic()
+    lead = self.sm['radarState'].leadOne
+    supported = self.CP.carFingerprint == CAR.FORD_BRONCO_SPORT_MK1 and bool(self.CP.flags & FordFlags.NON_ACC)
+    cfg, _ = self.bronco_store.refresh(now)
+    fresh = self.sm.seen['radarState'] and self.sm.valid['radarState'] and 0 <= now-self.sm.logMonoTime['radarState']/1e9 <= .2
+    urgent = EventName.fcw in self.events.names or CS.stockFcw or CS.stockAeb
+    sample = ClosingSample(now, CS.vEgo, CS.aEgo, lead.dRel, lead.vRel, lead.aLeadK, lead.modelProb,
+                           supported and cfg.closing_speed_warning and self.initialized and not self.CP.passive
+                           and CS.canValid and CS.gearShifter == car.CarState.GearShifter.drive and fresh and lead.present,
+                           CS.brakePressed, urgent)
+    visible, chime = self.closing_advisory.update(sample)
+    advisory_type = 'broncoClosingAdvisory'
+    if visible:
+      alert = Alert('CLOSING FAST — Check braking', '', AlertStatus.userPrompt, AlertSize.small,
+                    AlertPriority.LOW, VisualAlert.none, AudibleAlert.prompt if chime else AudibleAlert.none, .1)
+      alert.alert_type = advisory_type
+      alert.event_type = advisory_type
+      alerts.append(alert)
+      if not self.closing_advisory_visible:
+        cloudlog.event('bronco_closing_advisory', distance=lead.dRel, closing_speed=-lead.vRel,
+                       ego_accel=CS.aEgo, lead_accel=lead.aLeadK, brake_pressed=CS.brakePressed)
+    else:
+      clear_event_types.add(advisory_type)
+    self.closing_advisory_visible = visible
     self.AM.add_many(self.sm.frame, alerts)
     self.AM.process_alerts(self.sm.frame, clear_event_types)
 

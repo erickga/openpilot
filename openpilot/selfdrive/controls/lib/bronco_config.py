@@ -20,6 +20,7 @@ class BroncoHubConfig:
   blindspot_path_glow: bool = True
   road_edge_lane_change_block: bool = True
   curve_speed_warning: bool = True
+  closing_speed_warning: bool = True
   curve_max_lat_accel: float = 2.2
   hud_show_nav: bool = True
   nav_assist_lane_change: bool = False
@@ -38,6 +39,7 @@ class BroncoHubConfig:
       blindspot_path_glow=bool(self.blindspot_path_glow),
       road_edge_lane_change_block=bool(self.road_edge_lane_change_block),
       curve_speed_warning=bool(self.curve_speed_warning),
+      closing_speed_warning=bool(self.closing_speed_warning),
       curve_max_lat_accel=round(max_lat, 2),
       hud_show_nav=bool(self.hud_show_nav),
       nav_assist_lane_change=bool(self.nav_assist_lane_change),
