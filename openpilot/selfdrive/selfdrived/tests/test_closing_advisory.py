@@ -7,19 +7,26 @@ from openpilot.selfdrive.selfdrived.closing_advisory import ClosingAdvisory, Clo
 
 class TestClosingAdvisory(unittest.TestCase):
   def sample(self, now, **changes):
-    return replace(ClosingSample(now, 48.072/3.6, -.84977, 35.0992, -7.0079, -.87519, .9928,
+    return replace(ClosingSample(now, 54.0/3.6, -.6, 22.0, -9.0, -.8, .9928,
                                  brake_pressed=True), **changes)
 
   def test_recorded_braking_approach_warns_after_persistence(self):
     detector = ClosingAdvisory()
     self.assertEqual(detector.update(self.sample(0)), (False, False))
-    for i in range(1, 6):
+    for i in range(1, 9):
       self.assertEqual(detector.update(self.sample(i*.05)), (False, False))
-    self.assertEqual(detector.update(self.sample(.31)), (True, True))
-    for i in range(7, 42):
+    self.assertEqual(detector.update(self.sample(.46)), (True, True))
+    for i in range(10, 42):
       visible, chime = detector.update(self.sample(i*.05))
     self.assertTrue(visible)
     self.assertFalse(chime)
+
+  def test_normal_progressive_braking_approach_does_not_warn(self):
+    # The earlier 35.1m / 48.1 km/h / 7.0 m/s gentle-braking approach must NOT warn.
+    gentle = ClosingSample(0, 48.072/3.6, -.84977, 35.0992, -7.0079, -.87519, .9928, brake_pressed=True)
+    d = ClosingAdvisory()
+    for i in range(40):
+      self.assertEqual(d.update(replace(gentle, now=i*.05)), (False, False))
 
   def test_adequate_braking_and_opening_gap_do_not_warn(self):
     for changes in ({"accel": -3.0}, {"relative_speed": 1.0}, {"distance": 70.0},

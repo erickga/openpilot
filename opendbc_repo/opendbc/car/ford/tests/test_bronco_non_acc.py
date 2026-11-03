@@ -119,6 +119,45 @@ class TestBroncoNonACC(unittest.TestCase):
       _, msgs = controller.update(cc.as_reader(), cs, frame * 10_000_000)
       self.assertNotIn(0x83, [msg[0] for msg in msgs])
 
+  def test_low_speed_overflow_path_angle_and_fast_unwind(self):
+    cp = params()
+    cs = CarState(cp)
+    pt = SimpleNamespace(can_valid=True, vl=defaultdict(lambda: defaultdict(int)))
+    cam = SimpleNamespace(can_valid=True, vl=defaultdict(lambda: defaultdict(int)))
+    pt.vl['BrakeSysFeatures']['Veh_V_ActlBrk'] = 18.0  # 5.0 m/s
+    cs.out = cs.update({Bus.pt: pt, Bus.cam: cam})
+    controller = CarController(DBC[cp.carFingerprint], cp)
+    cc = structs.CarControl()
+    cc.enabled = True
+    cc.latActive = True
+    cc.actuators.curvature = 0.035  # tight turn exceeding 0.02 m^-1 DBC curvature cap
+
+    for frame in range(60):
+      _, msgs = controller.update(cc.as_reader(), cs, frame * 10_000_000)
+    self.assertAlmostEqual(controller.apply_curvature_last, 0.02, places=3)
+    self.assertGreater(controller.apply_path_angle_last, 0.05)
+    self.assertLessEqual(controller.apply_path_angle_last, 0.12)
+
+    # When steering demand returns to straight (0.0), path_angle unwinds to 0 rapidly
+    # and never emits a non-zero path_angle once applied_curvature drops below 0.0175.
+    cc.actuators.curvature = 0.0
+    for frame in range(60, 105):
+      _, msgs = controller.update(cc.as_reader(), cs, frame * 10_000_000)
+      if abs(controller.apply_curvature_last) < 0.0175:
+        self.assertEqual(controller.apply_path_angle_last, 0.0)
+    self.assertEqual(controller.apply_path_angle_last, 0.0)
+
+    # Disengagement immediately zeroes path_angle in a single frame so Panda never rejects it.
+    cc.latActive = True
+    cc.actuators.curvature = 0.035
+    for frame in range(105, 165):
+      controller.update(cc.as_reader(), cs, frame * 10_000_000)
+    self.assertGreater(controller.apply_path_angle_last, 0.05)
+    cc.latActive = False
+    for frame in range(165, 175):
+      controller.update(cc.as_reader(), cs, frame * 10_000_000)
+    self.assertEqual(controller.apply_path_angle_last, 0.0)
+
 
 if __name__ == '__main__':
   unittest.main()

@@ -45,15 +45,16 @@ class ClosingAdvisory:
       return False, False
 
     closing = -s.relative_speed
-    usable = s.speed >= 10/3.6 and 3 < s.distance <= 100 and s.confidence >= .95 and closing >= 2
+    usable = s.speed >= 15/3.6 and 4 < s.distance <= 80 and s.confidence >= .96 and closing >= 3.0
     ttc = s.distance/closing if closing > 0 else math.inf
-    # Relative deceleration needed to remove closing speed before a 5m buffer,
-    # assuming constant relative acceleration. This is NOT a stopping guarantee.
-    required = closing**2/(2*max(s.distance-5, 1))
+    # Relative deceleration needed to remove closing speed before a 4m buffer,
+    # assuming constant relative acceleration. Require a meaningful deceleration
+    # demand (>= 2.0 m/s^2) and allow progressive driver braking before warning.
+    required = closing**2/(2*max(s.distance-4, 1))
     recovery = s.lead_accel-s.accel
-    hazard = usable and ttc <= 5.5 and recovery < required
+    hazard = usable and ttc <= 3.5 and required >= 2.0 and recovery < 0.75*required
     # Hysteresis prevents noisy camera velocity from repeatedly restarting dwell.
-    hold = usable and ttc <= 6.5 and recovery < 1.2*required and self.since is not None
+    hold = usable and ttc <= 4.2 and required >= 1.6 and recovery < 0.95*required and self.since is not None
     if not hazard and not hold:
       self.since = None
       self.until = -math.inf
@@ -66,7 +67,7 @@ class ClosingAdvisory:
     self.safe_since = None
     if self.since is None:
       self.since = s.now
-    if hazard and self.armed and s.now-self.since >= .3 and s.now-self.last_alert >= 10:
+    if hazard and self.armed and s.now-self.since >= .45 and s.now-self.last_alert >= 10:
       self.last_alert = s.now
       self.until = s.now+2
       self.armed = False

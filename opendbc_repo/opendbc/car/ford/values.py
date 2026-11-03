@@ -29,6 +29,10 @@ class CarControllerParams:
   # We observed no windup so we allow higher than EPS
   CURVATURE_LIMITS: CurvatureSteeringLimits = CurvatureSteeringLimits(0.02)  # Max curvature for steering command, m^-1
   CURVATURE_ERROR = 0.002  # ~6 degrees at 10 m/s, ~10 degrees at 35 m/s
+  LOW_SPEED_CURVATURE_MAX = 0.05  # Max virtual curvature before overflow clipping, m^-1 (~20m radius)
+  LOW_SPEED_PATH_ANGLE_GAIN = 4.0  # Lookahead distance (m) converting excess curvature (m^-1) to path_angle (rad)
+  LOW_SPEED_PATH_ANGLE_MAX = 0.12  # Max low-speed overflow path_angle command, rad (240 CAN units)
+  LOW_SPEED_PATH_ANGLE_RATE = 0.015  # Max path_angle step per 20Hz frame, rad (0.30 rad/s)
 
   ACCEL_MAX = 2.0               # m/s^2 max acceleration
   ACCEL_MIN = -3.5              # m/s^2 max deceleration

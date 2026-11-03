@@ -32,6 +32,39 @@ def apply_creep_compensation(accel: float, v_ego: float) -> float:
   return float(accel)
 
 
+def compute_low_speed_path_angle(desired_curvature: float, applied_curvature: float,
+                                 v_ego_raw: float, lat_active: bool, prev_path_angle: float) -> float:
+  """
+  Converts low-speed curvature demand exceeding the 0.02 m^-1 DBC curvature ceiling
+  into a smooth, rate-limited path_angle (LatCtlPath_An_Actl) assist below 10 m/s.
+  """
+  # Must immediately zero when inactive, outside the 10 m/s speed envelope, below the
+  # 0.017 m^-1 Panda safety curvature threshold, or if sign disagrees with prev_path_angle.
+  if not lat_active or v_ego_raw >= 10.0 or abs(applied_curvature) < 0.0175 or (prev_path_angle * applied_curvature < 0.0):
+    return 0.0
+
+  v_safe = max(v_ego_raw, 1.0)
+  max_curv = min(CarControllerParams.LOW_SPEED_CURVATURE_MAX,
+                 CarControllerParams.CURVATURE_LIMITS.MAX_LATERAL_ACCEL / (v_safe ** 2))
+  clamped_desired = float(np.clip(desired_curvature, -max_curv, max_curv))
+  if clamped_desired * applied_curvature <= 0.0 or abs(applied_curvature) < 0.018:
+    overflow = 0.0
+  else:
+    overflow = clamped_desired - applied_curvature
+    if overflow * applied_curvature < 0.0:
+      overflow = 0.0
+  speed_scale = float(np.interp(v_ego_raw, [1.0, 2.5, 7.0, 9.5], [0.0, 1.0, 1.0, 0.0]))
+  raw_angle = overflow * CarControllerParams.LOW_SPEED_PATH_ANGLE_GAIN * speed_scale
+  target = float(np.clip(raw_angle, -CarControllerParams.LOW_SPEED_PATH_ANGLE_MAX,
+                         CarControllerParams.LOW_SPEED_PATH_ANGLE_MAX))
+
+  delta = CarControllerParams.LOW_SPEED_PATH_ANGLE_RATE
+  stepped = float(np.clip(target, prev_path_angle - delta, prev_path_angle + delta))
+  if abs(stepped) < 1e-4 or (stepped * applied_curvature < 0.0):
+    return 0.0
+  return stepped
+
+
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
@@ -39,6 +72,7 @@ class CarController(CarControllerBase):
     self.CAN = fordcan.CanBus(CP)
 
     self.apply_curvature_last = 0
+    self.apply_path_angle_last = 0.0
     self.anti_overshoot_curvature_last = 0
     self.accel = 0.0
     self.gas = 0.0
@@ -92,6 +126,12 @@ class CarController(CarControllerBase):
                                                                           0., CC.latActive, CarControllerParams.STEER_STEP)
       self.apply_curvature_last = apply_curvature
 
+      if self.CP.carFingerprint == CAR.FORD_BRONCO_SPORT_MK1 and (self.CP.flags & FordFlags.NON_ACC):
+        self.apply_path_angle_last = compute_low_speed_path_angle(actuators.curvature, self.apply_curvature_last,
+                                                                  CS.out.vEgoRaw, CC.latActive, self.apply_path_angle_last)
+      else:
+        self.apply_path_angle_last = 0.0
+
       if self.CP.flags & FordFlags.CANFD:
         # TODO: extended mode
         # Ford uses four individual signals to dictate how to drive to the car. Curvature alone (limited to 0.02 m^-1)
@@ -103,7 +143,7 @@ class CarController(CarControllerBase):
         counter = (self.frame // CarControllerParams.STEER_STEP) % 0x10
         can_sends.append(fordcan.create_lat_ctl2_msg(self.packer, self.CAN, mode, 0., 0., -self.apply_curvature_last, 0., counter))
       else:
-        can_sends.append(fordcan.create_lat_ctl_msg(self.packer, self.CAN, CC.latActive, 0., 0., -self.apply_curvature_last, 0.))
+        can_sends.append(fordcan.create_lat_ctl_msg(self.packer, self.CAN, CC.latActive, 0., -self.apply_path_angle_last, -self.apply_curvature_last, 0.))
 
     # send lka msg at 33Hz
     if (self.frame % CarControllerParams.LKA_STEP) == 0:
