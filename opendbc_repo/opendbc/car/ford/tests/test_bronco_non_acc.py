@@ -158,6 +158,85 @@ class TestBroncoNonACC(unittest.TestCase):
       controller.update(cc.as_reader(), cs, frame * 10_000_000)
     self.assertEqual(controller.apply_path_angle_last, 0.0)
 
+  def test_driver_assisted_turn_releases_path_angle_and_holds_until_rearmed(self):
+    cp = params()
+    cs = CarState(cp)
+    pt = SimpleNamespace(can_valid=True, vl=defaultdict(lambda: defaultdict(int)))
+    cam = SimpleNamespace(can_valid=True, vl=defaultdict(lambda: defaultdict(int)))
+    pt.vl['BrakeSysFeatures']['Veh_V_ActlBrk'] = 28.8  # 8.0 m/s
+    cs.out = cs.update({Bus.pt: pt, Bus.cam: cam})
+    controller = CarController(DBC[cp.carFingerprint], cp)
+    cc = structs.CarControl()
+    cc.enabled = True
+    cc.latActive = True
+
+    # Wind up into a tight low-speed turn
+    cc.actuators.curvature = 0.035
+    for frame in range(60):
+      controller.update(cc.as_reader(), cs, frame * 10_000_000)
+    self.assertAlmostEqual(controller.apply_curvature_last, 0.02, places=3)
+    self.assertGreater(controller.apply_path_angle_last, 0.03)
+
+    # Driver applies steering torque to assist the turn: path_angle immediately drops to 0.0
+    pt.vl['EPAS_INFO']['SteeringColumnTorque'] = 2.5
+    for _ in range(6):
+      cs.out = cs.update({Bus.pt: pt, Bus.cam: cam})
+    self.assertTrue(cs.out.steeringPressed)
+    for frame in range(60, 70):
+      controller.update(cc.as_reader(), cs, frame * 10_000_000)
+    self.assertEqual(controller.apply_path_angle_last, 0.0)
+
+    # Driver releases the wheel while the planner STILL requests +0.035 curvature:
+    # path_angle must remain suppressed at 0.0 (not rebuild into the turn) until the turn exits.
+    pt.vl['EPAS_INFO']['SteeringColumnTorque'] = 0.0
+    for _ in range(6):
+      cs.out = cs.update({Bus.pt: pt, Bus.cam: cam})
+    self.assertFalse(cs.out.steeringPressed)
+    for frame in range(70, 120):
+      controller.update(cc.as_reader(), cs, frame * 10_000_000)
+      self.assertEqual(controller.apply_path_angle_last, 0.0)
+
+    # Once requested curvature drops below the 0.016 m^-1 rearm threshold (or reverses sign),
+    # a subsequent tight turn can use path_angle assist again.
+    cc.actuators.curvature = 0.010
+    for frame in range(120, 140):
+      controller.update(cc.as_reader(), cs, frame * 10_000_000)
+      self.assertEqual(controller.apply_path_angle_last, 0.0)
+    cc.actuators.curvature = 0.035
+    for frame in range(140, 200):
+      controller.update(cc.as_reader(), cs, frame * 10_000_000)
+    self.assertGreater(controller.apply_path_angle_last, 0.03)
+
+  def test_driver_assisted_reversal_stays_suppressed_after_release(self):
+    for direction in (-1, 1):
+      with self.subTest(direction=direction):
+        cp = params()
+        cs = CarState(cp)
+        pt = SimpleNamespace(can_valid=True, vl=defaultdict(lambda: defaultdict(int)))
+        cam = SimpleNamespace(can_valid=True, vl=defaultdict(lambda: defaultdict(int)))
+        pt.vl['BrakeSysFeatures']['Veh_V_ActlBrk'] = 28.8
+        cs.out = cs.update({Bus.pt: pt, Bus.cam: cam})
+        controller = CarController(DBC[cp.carFingerprint], cp)
+        cc = structs.CarControl(enabled=True, latActive=True)
+
+        cs.out.steeringPressed = True
+        cc.actuators.curvature = direction * 0.035
+        controller.update(cc.as_reader(), cs, 0)
+        # Reverse on the last steering update with driver input still asserted.
+        cc.actuators.curvature = -direction * 0.035
+        for frame in range(1, 6):
+          controller.update(cc.as_reader(), cs, frame * 10_000_000)
+        cs.out.steeringPressed = False
+        for frame in range(6, 100):
+          controller.update(cc.as_reader(), cs, frame * 10_000_000)
+          self.assertEqual(controller.apply_path_angle_last, 0.0)
+
+        # A later reversal without driver input rearms the assist normally.
+        cc.actuators.curvature = direction * 0.035
+        for frame in range(100, 200):
+          controller.update(cc.as_reader(), cs, frame * 10_000_000)
+        self.assertGreater(direction * controller.apply_path_angle_last, 0.03)
+
 
 if __name__ == '__main__':
   unittest.main()

@@ -33,14 +33,18 @@ def apply_creep_compensation(accel: float, v_ego: float) -> float:
 
 
 def compute_low_speed_path_angle(desired_curvature: float, applied_curvature: float,
-                                 v_ego_raw: float, lat_active: bool, prev_path_angle: float) -> float:
+                                 v_ego_raw: float, lat_active: bool, prev_path_angle: float,
+                                 steering_pressed: bool = False) -> float:
   """
   Converts low-speed curvature demand exceeding the 0.02 m^-1 DBC curvature ceiling
   into a smooth, rate-limited path_angle (LatCtlPath_An_Actl) assist below 10 m/s.
   """
-  # Must immediately zero when inactive, outside the 10 m/s speed envelope, below the
-  # 0.017 m^-1 Panda safety curvature threshold, or if sign disagrees with prev_path_angle.
-  if not lat_active or v_ego_raw >= 10.0 or abs(applied_curvature) < 0.0175 or (prev_path_angle * applied_curvature < 0.0):
+  # Must immediately zero when inactive, during driver override, outside the 10 m/s speed envelope,
+  # below the 0.017 m^-1 Panda safety curvature threshold, if sign disagrees with prev_path_angle,
+  # or as soon as desired curvature starts unwinding at or below applied_curvature.
+  if (not lat_active or steering_pressed or v_ego_raw >= 10.0 or abs(applied_curvature) < 0.0175 or
+      (prev_path_angle * applied_curvature < 0.0) or (desired_curvature * applied_curvature <= 0.0) or
+      abs(desired_curvature) <= abs(applied_curvature)):
     return 0.0
 
   v_safe = max(v_ego_raw, 1.0)
@@ -73,6 +77,7 @@ class CarController(CarControllerBase):
 
     self.apply_curvature_last = 0
     self.apply_path_angle_last = 0.0
+    self.path_angle_rearm_dir = 0
     self.anti_overshoot_curvature_last = 0
     self.accel = 0.0
     self.gas = 0.0
@@ -127,9 +132,20 @@ class CarController(CarControllerBase):
       self.apply_curvature_last = apply_curvature
 
       if self.CP.carFingerprint == CAR.FORD_BRONCO_SPORT_MK1 and (self.CP.flags & FordFlags.NON_ACC):
+        curv_dir = 1 if actuators.curvature > 0.0 else (-1 if actuators.curvature < 0.0 else 0)
+        if not CC.latActive or CS.out.vEgoRaw >= 10.0 or abs(actuators.curvature) <= 0.016:
+          self.path_angle_rearm_dir = 0
+        elif CS.out.steeringPressed:
+          # A driver-assisted reversal belongs to the new turn even if the driver
+          # releases before the next steering update.
+          self.path_angle_rearm_dir = curv_dir
+        elif curv_dir * self.path_angle_rearm_dir < 0:
+          self.path_angle_rearm_dir = 0
         self.apply_path_angle_last = compute_low_speed_path_angle(actuators.curvature, self.apply_curvature_last,
-                                                                  CS.out.vEgoRaw, CC.latActive, self.apply_path_angle_last)
+                                                                  CS.out.vEgoRaw, CC.latActive, self.apply_path_angle_last,
+                                                                  CS.out.steeringPressed or (self.path_angle_rearm_dir != 0))
       else:
+        self.path_angle_rearm_dir = 0
         self.apply_path_angle_last = 0.0
 
       if self.CP.flags & FordFlags.CANFD:
